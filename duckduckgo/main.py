@@ -1,14 +1,31 @@
 from fastapi import FastAPI
-import os
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
 app = FastAPI()
 
-@app.get("/")
-def read_root():
-    return {"message": "안녕하세요! GitHub Actions를 통해 Cloud Run에 배포된 앱입니다."}
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-if __name__ == "__main__":
-    import uvicorn
-    # Cloud Run은 환경 변수 PORT를 통해 포트 번호를 전달합니다. (기본값 8080)
-    port = int(os.environ.get("PORT", 8080))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+class PoemRequest(BaseModel):
+    topic: str
+
+@app.post("/api/poem")
+def generate_poem(data: PoemRequest):
+    # GOOGLE_API_KEY 환경변수 자동 참조
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.7)
+    prompt = PromptTemplate.from_template("주제 '{topic}'에 대한 짧고 감동적인 시를 한 편 작성해줘.")
+    parser = StrOutputParser()
+    
+    chain = prompt | llm | parser
+    result = chain.invoke({"topic": data.topic})
+    
+    return {"poem": result}
