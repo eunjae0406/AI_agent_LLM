@@ -75,7 +75,7 @@ async def upload_and_create_vectordb(file: UploadFile = File(...)):
         )
 
         os.remove(tmp_path)
-        return {"status": "success", "message": f"'{file.filename}' 벡터 DB 생성 완료"}
+        return {"status": "success", "message": f"'{file.filename}' 벡터 DB 생성 완료 (001 버전 적용됨!)"}
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
