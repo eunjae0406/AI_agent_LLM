@@ -1,9 +1,9 @@
-fastapi==0.104.1
-uvicorn==0.24.0
-python-multipart==0.0.6
-langchain==0.1.16
+fastapi
+uvicorn
+python-multipart
+langchain
 langchain-google-genai
-chromadb==0.4.24
-pypdf==4.2.0
-langchainhub==0.1.15
-sse-starlette==2.1.0
+chromadb
+pypdf
+langchainhub
+sse-starlette
