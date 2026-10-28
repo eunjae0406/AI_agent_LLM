@@ -8,7 +8,9 @@ from pydantic import BaseModel
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+# 💡 에러 뿜는 구글 임베딩 대신, 등록해두신 OpenAI 키를 사용하는 구원투수!
+from langchain_openai import OpenAIEmbeddings 
 from langchain_community.vectorstores import Chroma
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
@@ -24,21 +26,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-if not GOOGLE_API_KEY:
-    raise ValueError("GOOGLE_API_KEY 환경 변수가 설정되지 않았습니다.")
-
 CHROMA_PERSIST_DIR = "./chroma_db"
 
-# 💡 모델 경로 명시: models/ 접두사 없이 text-embedding-004 전달
-embeddings = GoogleGenerativeAIEmbeddings(model="text-embedding-004")
+# 💡 404 에러의 주범인 구글 임베딩을 빼버리고 OpenAI로 완벽 우회
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
 class QueryRequest(BaseModel):
     query: str
-
-@app.get("/")
-def health_check():
-    return {"status": "ok", "model": "text-embedding-004"}
 
 @app.post("/upload")
 async def upload_and_create_vectordb(file: UploadFile = File(...)):
@@ -63,7 +57,7 @@ async def upload_and_create_vectordb(file: UploadFile = File(...)):
         )
 
         os.remove(tmp_path)
-        return {"status": "success", "message": f"'{file.filename}' 벡터 DB 생성 완료"}
+        return {"status": "success", "message": f"'{file.filename}' 벡터 DB 생성 완료! (OpenAI 우회 성공)"}
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -74,6 +68,8 @@ async def ask_question(request: QueryRequest):
         raise HTTPException(status_code=400, detail="벡터 DB가 아직 생성되지 않았습니다. PDF를 먼저 업로드하세요.")
         
     vectorstore = Chroma(persist_directory=CHROMA_PERSIST_DIR, embedding_function=embeddings)
+    
+    # 💡 벡터 검색은 OpenAI가 하지만, 챗봇 대답은 원래대로 현진건(Gemini)이 담당합니다!
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro-latest", streaming=True)
     
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
