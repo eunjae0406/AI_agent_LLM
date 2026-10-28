@@ -46,7 +46,6 @@ class SafeGoogleEmbeddings(GoogleGenerativeAIEmbeddings):
         if not vector: return vector
         return self._flatten(vector)
 
-# 💡 404 에러 방지를 위해 가장 안정적인 모델로 강제 고정
 embeddings = SafeGoogleEmbeddings(model="models/embedding-001")
 
 class QueryRequest(BaseModel):
@@ -75,7 +74,7 @@ async def upload_and_create_vectordb(file: UploadFile = File(...)):
         )
 
         os.remove(tmp_path)
-        return {"status": "success", "message": f"'{file.filename}' 벡터 DB 생성 완료 (001 버전 적용됨!)"}
+        return {"status": "success", "message": f"'{file.filename}' 벡터 DB 생성 완료"}
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -88,7 +87,6 @@ async def ask_question(request: QueryRequest):
     vectorstore = Chroma(persist_directory=CHROMA_PERSIST_DIR, embedding_function=embeddings)
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro-latest", streaming=True)
     
-    # 💡 에러를 일으키던 다중 쿼리 검색기 대신 기본 검색기 사용 (매우 안정적)
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
     
     def format_docs(docs):
