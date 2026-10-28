@@ -40,10 +40,14 @@ class SafeGoogleEmbeddings(GoogleGenerativeAIEmbeddings):
 
     def embed_documents(self, texts, **kwargs):
         vectors = super().embed_documents(texts, **kwargs)
+        if not vectors:
+            return vectors
         return [self._flatten(v) for v in vectors]
 
     def embed_query(self, text, **kwargs):
         vector = super().embed_query(text, **kwargs)
+        if not vector:
+            return vector
         return self._flatten(vector)
 
 embeddings = SafeGoogleEmbeddings(model="models/text-embedding-004")
@@ -78,6 +82,7 @@ async def upload_and_create_vectordb(file: UploadFile = File(...)):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/ask")
 async def ask_question(request: QueryRequest):
