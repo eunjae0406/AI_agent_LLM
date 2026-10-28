@@ -9,7 +9,8 @@ from pydantic import BaseModel
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain_community.vectorstores import Chroma
+# 💡 랭체인 0.3.x 최신 버전에 맞춰 Chroma 가져오는 경로 변경
+from langchain_chroma import Chroma
 from langchain.retrievers.multi_query import MultiQueryRetriever
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
@@ -32,7 +33,7 @@ if not GOOGLE_API_KEY:
 
 CHROMA_PERSIST_DIR = "./chroma_db"
 
-# 💡 구글 임베딩의 다차원 리스트 반환 버그를 고치는 래퍼 클래스
+# 배열 껍질 버그 방어막 (그대로 유지)
 class SafeGoogleEmbeddings(GoogleGenerativeAIEmbeddings):
     def _flatten(self, vec):
         while isinstance(vec, list) and len(vec) > 0 and isinstance(vec[0], list):
@@ -83,7 +84,6 @@ async def upload_and_create_vectordb(file: UploadFile = File(...)):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/ask")
 async def ask_question(request: QueryRequest):
