@@ -9,13 +9,10 @@ from pydantic import BaseModel
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-# 💡 랭체인 0.3.x 최신 버전에 맞춰 Chroma 가져오는 경로 변경
-from langchain_chroma import Chroma
-from langchain.retrievers.multi_query import MultiQueryRetriever
+from langchain_community.vectorstores import Chroma
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain import hub
 
 app = FastAPI(title="Hyun Jin-geon RAG Server")
 
@@ -33,7 +30,6 @@ if not GOOGLE_API_KEY:
 
 CHROMA_PERSIST_DIR = "./chroma_db"
 
-# 배열 껍질 버그 방어막 (그대로 유지)
 class SafeGoogleEmbeddings(GoogleGenerativeAIEmbeddings):
     def _flatten(self, vec):
         while isinstance(vec, list) and len(vec) > 0 and isinstance(vec[0], list):
@@ -42,16 +38,15 @@ class SafeGoogleEmbeddings(GoogleGenerativeAIEmbeddings):
 
     def embed_documents(self, texts, **kwargs):
         vectors = super().embed_documents(texts, **kwargs)
-        if not vectors:
-            return vectors
+        if not vectors: return vectors
         return [self._flatten(v) for v in vectors]
 
     def embed_query(self, text, **kwargs):
         vector = super().embed_query(text, **kwargs)
-        if not vector:
-            return vector
+        if not vector: return vector
         return self._flatten(vector)
 
+# 💡 404 에러 방지를 위해 가장 안정적인 모델로 강제 고정
 embeddings = SafeGoogleEmbeddings(model="models/embedding-001")
 
 class QueryRequest(BaseModel):
@@ -91,18 +86,14 @@ async def ask_question(request: QueryRequest):
         raise HTTPException(status_code=400, detail="벡터 DB가 아직 생성되지 않았습니다. PDF를 먼저 업로드하세요.")
         
     vectorstore = Chroma(persist_directory=CHROMA_PERSIST_DIR, embedding_function=embeddings)
-    
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro-latest", streaming=True)
     
-    retriever_from_llm = MultiQueryRetriever.from_llm(
-        retriever=vectorstore.as_retriever(search_kwargs={"k": 3}),
-        llm=llm
-    )
+    # 💡 에러를 일으키던 다중 쿼리 검색기 대신 기본 검색기 사용 (매우 안정적)
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
     
     def format_docs(docs):
         return "\n\n".join(doc.page_content for doc in docs)
 
-    base_prompt = hub.pull("rlm/rag-prompt")
     system_message = (
         "당신은 소설 '운수 좋은 날'을 집필한 현진건 작가님입니다. "
         "근대 한국 문학의 현실주의 문체로 사용자의 질문에 답변하세요. "
@@ -115,13 +106,13 @@ async def ask_question(request: QueryRequest):
     ])
 
     rag_chain = (
-        {"context": retriever_from_llm | format_docs, "question": RunnablePassthrough()}
+        {"context": retriever | format_docs, "question": RunnablePassthrough()}
         | prompt
         | llm
         | StrOutputParser()
     )
 
-    retrieved_docs = retriever_from_llm.invoke(request.query)
+    retrieved_docs = retriever.invoke(request.query)
     source_texts = [doc.page_content for doc in retrieved_docs]
 
     async def generate_response():
