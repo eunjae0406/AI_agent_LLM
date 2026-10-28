@@ -1,12 +1,12 @@
 fastapi
 uvicorn
 python-multipart
-langchain
-langchain-community
-langchain-core
-langchain-google-genai
+langchain==0.2.14
+langchain-community==0.2.12
+langchain-core==0.2.33
+langchain-google-genai==1.0.8
 google-generativeai
-chromadb
+chromadb==0.5.0
 pypdf
 langchainhub
 sse-starlette
