@@ -35,8 +35,21 @@ if not GOOGLE_API_KEY:
 
 # Chroma DB 설정
 CHROMA_PERSIST_DIR = "./chroma_db"
-# 구글 임베딩 모델 (요청하신 text-embedding-004 사용)
-embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
+
+# 구글 임베딩의 다차원 리스트 반환 버그를 해결하는 커스텀 클래스
+class SafeGoogleEmbeddings(GoogleGenerativeAIEmbeddings):
+    def embed_documents(self, texts, **kwargs):
+        vectors = super().embed_documents(texts, **kwargs)
+        if not vectors:
+            return vectors
+        if isinstance(vectors[0], list) and len(vectors[0]) > 0 and isinstance(vectors[0][0], list):
+            return [item for sublist in vectors for item in sublist]
+        return vectors
+
+# 기존 임베딩 선언 대신 커스텀 클래스로 덮어쓰기
+embeddings = SafeGoogleEmbeddings(model="models/text-embedding-004")
+
+# 질의 요청 모델
 # 질의 요청 모델
 class QueryRequest(BaseModel):
     query: str
