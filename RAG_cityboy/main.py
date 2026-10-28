@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import ChatGoogleGenerativeAI
-# 💡 에러 뿜는 구글 임베딩 대신, 등록해두신 OpenAI 키를 사용하는 구원투수!
+# 💡 에러 뿜는 구글 임베딩을 완벽히 배제하고 OpenAI로 우회
 from langchain_openai import OpenAIEmbeddings 
 from langchain_community.vectorstores import Chroma
 from langchain_core.runnables import RunnablePassthrough
@@ -28,11 +28,16 @@ app.add_middleware(
 
 CHROMA_PERSIST_DIR = "./chroma_db"
 
-# 💡 404 에러의 주범인 구글 임베딩을 빼버리고 OpenAI로 완벽 우회
+# OpenAI 임베딩 적용 (구글 404 에러 원천 차단)
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
 class QueryRequest(BaseModel):
     query: str
+
+# 💡 브라우저 주소창에 주소를 쳤을 때 새 코드가 적용되었는지 바로 확인하는 기능
+@app.get("/")
+def health_check():
+    return {"status": "ok", "message": "새로운 OpenAI 버전 서버가 정상 작동 중입니다!"}
 
 @app.post("/upload")
 async def upload_and_create_vectordb(file: UploadFile = File(...)):
@@ -69,7 +74,7 @@ async def ask_question(request: QueryRequest):
         
     vectorstore = Chroma(persist_directory=CHROMA_PERSIST_DIR, embedding_function=embeddings)
     
-    # 💡 벡터 검색은 OpenAI가 하지만, 챗봇 대답은 원래대로 현진건(Gemini)이 담당합니다!
+    # 챗봇 대답은 원래대로 현진건(Gemini)이 담당!
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro-latest", streaming=True)
     
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
