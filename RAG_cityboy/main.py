@@ -1,25 +1,25 @@
 import os
-import json
 import tempfile
-import pdfplumber
-from typing import List, Dict, Any
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+import json
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_openai import OpenAIEmbeddings
-from langchain_community.vectorstores import SupabaseVectorStore
+from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from supabase.client import create_client
+from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_community.vectorstores import Chroma
+from langchain.retrievers.multi_query import MultiQueryRetriever
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain import hub
 
-app = FastAPI(title="도시 정책 전문가 RAG 서버")
+# FastAPI 앱 초기화
+app = FastAPI(title="Hyun Jin-geon RAG Server")
 
-# CORS 미들웨어 설정 (Apps Script 클라이언트 요청 허용)
+# CORS 설정 (GAS 클라이언트에서의 호출을 허용하기 위해 추가)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,164 +28,115 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 환경 변수 로드
+# 환경변수에서 Google AI API 키 로드 (Cloud Run 환경 변수에 등록해야 함)
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+if not GOOGLE_API_KEY:
+    raise ValueError("GOOGLE_API_KEY 환경 변수가 설정되지 않았습니다.")
 
-# API 키 누락 검증
-if not all([GOOGLE_API_KEY, OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY]):
-    raise ValueError("서버 구동에 필요한 환경변수가 누락되었습니다.")
+# Chroma DB 설정
+CHROMA_PERSIST_DIR = "./chroma_db"
+# 구글 임베딩 모델 (요청하신 text-embedding-004 사용)
+embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
 
-# Supabase 클라이언트 및 임베딩 설정
-supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
-embeddings = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_API_KEY)
+# 질의 요청 모델
+class QueryRequest(BaseModel):
+    query: str
 
-# LLM 객체 생성 (실시간 스트리밍 지원, Gemini 3.5 Flash Lite 적용)
-llm = ChatGoogleGenerativeAI(
-    model="gemini-3.5-flash-lite", 
-    google_api_key=GOOGLE_API_KEY, 
-    temperature=0, 
-    streaming=True
-)
-
-class ChatRequest(BaseModel):
-    question: str
-    chat_history: List[Dict[str, str]] = [] # [{"role": "user", "content": "..."}]
-
-@app.post("/upload_pdf")
-async def upload_pdf(file: UploadFile = File(...)):
-    """PDF 파일을 업로드받아 텍스트 변환, 청크 분할, 벡터DB 저장을 수행하는 API"""
+@app.post("/upload")
+async def upload_and_create_vectordb(file: UploadFile = File(...)):
+    """PDF 파일을 업로드받아 텍스트 추출, 청크 분할 후 Chroma DB에 저장합니다."""
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="PDF 파일만 업로드 가능합니다.")
     
     try:
-        # 1. 임시 파일로 PDF 저장 및 텍스트 추출
-        text_content = ""
+        # 1. 임시 파일로 PDF 저장
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(await file.read())
             tmp_path = tmp.name
+
+        # 2. PDF 텍스트 추출
+        loader = PyPDFLoader(tmp_path)
+        docs = loader.load()
+
+        # 3. 청크 단위로 쪼개기
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+        splits = text_splitter.split_documents(docs)
+
+        # 4. Chroma DB에 벡터 저장
+        Chroma.from_documents(
+            documents=splits, 
+            embedding=embeddings, 
+            persist_directory=CHROMA_PERSIST_DIR
+        )
+
+        # 임시 파일 삭제
+        os.remove(tmp_path)
+        return {"status": "success", "message": f"'{file.filename}' 벡터 DB 생성 완료"}
         
-        with pdfplumber.open(tmp_path) as pdf:
-            for page in pdf.pages:
-                extracted = page.extract_text()
-                if extracted:
-                    text_content += extracted + "\n"
-        os.remove(tmp_path) # 임시 파일 삭제
-
-        if not text_content.strip():
-            raise HTTPException(status_code=422, detail="PDF에서 텍스트를 추출하지 못했습니다.")
-
-        # 2. 텍스트 청크 단위로 쪼개기
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, 
-            chunk_overlap=200, 
-            separators=["\n\n", "\n", " ", ""]
-        )
-        texts = text_splitter.split_text(text_content)
-        metadatas = [{"source": file.filename, "chunk_index": i} for i in range(len(texts))]
-
-        # 3. 오픈 AI 임베딩 사용하여 Supabase 벡터 DB에 적용
-        SupabaseVectorStore.from_texts(
-            texts, 
-            embeddings, 
-            client=supabase_client, 
-            table_name="documents", 
-            query_name="match_documents",
-            metadatas=metadatas
-        )
-
-        return {"message": "RAG 벡터 DB 생성이 성공적으로 완료되었습니다.", "chunks_created": len(texts)}
-    
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"PDF 처리 중 오류 발생: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/chat")
-async def chat_endpoint(request: ChatRequest):
-    """스트리밍 방식으로 질문에 대한 검색(RAG) 및 답변을 반환하는 API"""
-    
-    # 1. 대화 기록(Chat History)을 Langchain 메시지 객체로 변환
-    history_messages = []
-    for msg in request.chat_history:
-        if msg.get("role") == "user":
-            history_messages.append(HumanMessage(content=msg.get("content")))
-        else:
-            history_messages.append(AIMessage(content=msg.get("content")))
-            
-    # 2. Query Augmentation Chain 구성 (질의 확장)
-    condense_system_prompt = """기존의 대화 내용을 활용하여 사용자가 질문한 의도를 파악해서 한문장의 명료한 질문으로 변환하라. 대명사나 이, 저, 그와 같은 표현을 명확한 명사로 표현하라"""
-    
-    condense_prompt = ChatPromptTemplate.from_messages([
-        ("system", condense_system_prompt),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{question}")
-    ])
-    
-    query_augmentation_chain = condense_prompt | llm | StrOutputParser()
 
-    # 3. 최종 답변 생성 프롬프트 구성 (시스템 메시지 설계)
-    qa_system_prompt = """너는 문서에 기반해 답변하는 도시 정책 전문가야.
+@app.post("/ask")
+async def ask_question(request: QueryRequest):
+    """사용자 질의를 받아 MultiQueryRetriever로 검색 후 스트리밍으로 답변을 반환합니다."""
     
-    [검색된 문서 내용]
-    {context}
-    """
-    qa_prompt = ChatPromptTemplate.from_messages([
-        ("system", qa_system_prompt),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{question}")
-    ])
+    # 벡터 DB 로드
+    if not os.path.exists(CHROMA_PERSIST_DIR):
+        raise HTTPException(status_code=400, detail="벡터 DB가 아직 생성되지 않았습니다. PDF를 먼저 업로드하세요.")
+        
+    vectorstore = Chroma(persist_directory=CHROMA_PERSIST_DIR, embedding_function=embeddings)
     
-    rag_chain = qa_prompt | llm | StrOutputParser()
-
-    # 4. 벡터 DB 및 리트리버 초기화
-    vector_store = SupabaseVectorStore(
-        client=supabase_client,
-        embedding=embeddings,
-        table_name="documents",
-        query_name="match_documents"
+    # LLM 초기화 (스트리밍 지원을 위해 streaming=True 설정)
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro-latest", streaming=True)
+    
+    # 1. 다중 질문 검색기 (MultiQueryRetriever) 생성
+    # 사용자의 질문을 LLM을 이용해 여러 개로 확장하여 검색 품질을 높임
+    retriever_from_llm = MultiQueryRetriever.from_llm(
+        retriever=vectorstore.as_retriever(search_kwargs={"k": 3}),
+        llm=llm
     )
-    retriever = vector_store.as_retriever(search_kwargs={"k": 4})
+    
+    # 문서 포맷팅 함수
+    def format_docs(docs):
+        return "\n\n".join(doc.page_content for doc in docs)
 
-    async def stream_generator():
-        try:
-            # 4. 체인 실행 (데이터 주입) - 증강된 질문 생성
-            # 대화 기록이 없으면 원본 질문을 그대로 사용, 있으면 질의 확장
-            if history_messages:
-                augmented_query = await query_augmentation_chain.ainvoke({
-                    "question": request.question,
-                    "chat_history": history_messages
-                })
-            else:
-                augmented_query = request.question
-                
-            # 5. 증강된 질의로 벡터 DB 검색
-            docs = retriever.invoke(augmented_query)
-            context = "\n\n".join([f"[출처: {d.metadata.get('source', '알수없음')}]\n{d.page_content}" for d in docs])
-            
-            # 클라이언트에 검색 내용(RAG)을 먼저 전송
-            initial_data = {
-                "type": "retrieval", 
-                "context": context, 
-                "augmented_query": augmented_query
-            }
-            yield f"data: {json.dumps(initial_data, ensure_ascii=False)}\n\n"
-            
-            # 6. 주어진 청크 기반하여 언어 모델로 답변 생성 (스트리밍)
-            async for chunk in rag_chain.astream({
-                "context": context,
-                "chat_history": history_messages,
-                "question": augmented_query
-            }):
-                chunk_data = {"type": "chunk", "content": chunk}
-                yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
-                
-            # 스트리밍 종료 신호
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-            
-        except Exception as e:
-            error_data = {"type": "error", "message": f"답변 생성 중 오류가 발생했습니다: {str(e)}"}
-            yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+    # 2. 프롬프트 허브 사용 및 시스템 역할 부여
+    # LangChain Hub에서 기본 RAG 프롬프트를 가져온 후, 시스템 메시지를 덮어씌워 역할 부여
+    base_prompt = hub.pull("rlm/rag-prompt")
+    system_message = (
+        "당신은 소설 '운수 좋은 날'을 집필한 현진건 작가님입니다. "
+        "근대 한국 문학의 현실주의 문체로 사용자의 질문에 답변하세요. "
+        "다음 검색된 컨텍스트를 바탕으로 답변을 작성하시오.\n\n"
+        "{context}"
+    )
+    # 기존 프롬프트를 요청하신 페르소나로 재구성
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_message),
+        ("human", "{question}")
+    ])
 
-    # 실시간 스트리밍 핸들러 적용 (Server-Sent Events)
-    return StreamingResponse(stream_generator(), media_type="text/event-stream")
+    # 3. LCEL 체인 구성 (RunnablePassthrough를 활용한 질의 확장 및 전달)
+    rag_chain = (
+        {"context": retriever_from_llm | format_docs, "question": RunnablePassthrough()}
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+
+    # 4. 검색된 출처(Source)를 먼저 가져오기
+    retrieved_docs = retriever_from_llm.invoke(request.query)
+    source_texts = [doc.page_content for doc in retrieved_docs]
+
+    # 5. 스트리밍 핸들러 제너레이터 함수 구현
+    # 서버의 실시간 스트리밍 처리를 위해 astream을 사용하여 청크 단위로 응답
+    async def generate_response():
+        # 프론트엔드에서 파싱하기 쉽게 출처 데이터를 먼저 JSON 형태로 전송
+        yield json.dumps({"type": "source", "data": source_texts}) + "\n"
+        
+        # LLM 답변 스트리밍 전송
+        async for chunk in rag_chain.astream(request.query):
+            yield json.dumps({"type": "answer", "data": chunk}) + "\n"
+
+    # StreamingResponse로 반환 (SSE 형식)
+    return StreamingResponse(generate_response(), media_type="application/x-ndjson")
