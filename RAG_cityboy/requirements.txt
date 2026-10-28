@@ -1,10 +1,10 @@
 fastapi
 uvicorn
 python-multipart
+pypdf
+chromadb
 langchain
 langchain-community
 langchain-core
 langchain-google-genai
 langchain-openai
-chromadb
-pypdf
