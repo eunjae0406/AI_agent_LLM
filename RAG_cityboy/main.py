@@ -16,7 +16,6 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain import hub
 
-# FastAPI 앱 초기화
 app = FastAPI(title="Hyun Jin-geon RAG Server")
 
 app.add_middleware(
@@ -33,30 +32,21 @@ if not GOOGLE_API_KEY:
 
 CHROMA_PERSIST_DIR = "./chroma_db"
 
-# =========================================================================
-# 💡 핵심 수정 부분: 구글 모델의 다차원 리스트 반환 버그를 고치는 래퍼 클래스
-# =========================================================================
 class SafeGoogleEmbeddings(GoogleGenerativeAIEmbeddings):
     def _flatten(self, vec):
-        # 배열이 [[0.01...]] 처럼 여러 겹으로 쌓여 있다면 순수 숫자 리스트 [0.01...]가 나올 때까지 껍질을 벗김
         while isinstance(vec, list) and len(vec) > 0 and isinstance(vec[0], list):
             vec = vec[0]
         return vec
 
     def embed_documents(self, texts, **kwargs):
         vectors = super().embed_documents(texts, **kwargs)
-        # 여러 문서의 벡터들의 껍질을 각각 벗겨서 반환
         return [self._flatten(v) for v in vectors]
 
     def embed_query(self, text, **kwargs):
         vector = super().embed_query(text, **kwargs)
-        # 질문 벡터의 껍질을 벗겨서 반환
         return self._flatten(vector)
 
-# 기존 임베딩 대신 껍질을 벗겨주는 커스텀 클래스 사용
 embeddings = SafeGoogleEmbeddings(model="models/text-embedding-004")
-# =========================================================================
-
 
 class QueryRequest(BaseModel):
     query: str
@@ -88,7 +78,6 @@ async def upload_and_create_vectordb(file: UploadFile = File(...)):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/ask")
 async def ask_question(request: QueryRequest):
