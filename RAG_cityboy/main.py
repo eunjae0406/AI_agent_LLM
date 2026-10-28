@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import ChatGoogleGenerativeAI
-# 💡 에러 뿜는 구글 임베딩을 완벽히 배제하고 OpenAI로 우회
+# 💡 골칫거리 구글 임베딩 대신 확실한 OpenAI 호출!
 from langchain_openai import OpenAIEmbeddings 
 from langchain_community.vectorstores import Chroma
 from langchain_core.runnables import RunnablePassthrough
@@ -28,16 +28,11 @@ app.add_middleware(
 
 CHROMA_PERSIST_DIR = "./chroma_db"
 
-# OpenAI 임베딩 적용 (구글 404 에러 원천 차단)
+# 💡 404, 400 에러 주범인 구글 버리고 OpenAI 임베딩으로 우회 (미리 등록해둔 sk-proj... 키 자동 사용)
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
 class QueryRequest(BaseModel):
     query: str
-
-# 💡 브라우저 주소창에 주소를 쳤을 때 새 코드가 적용되었는지 바로 확인하는 기능
-@app.get("/")
-def health_check():
-    return {"status": "ok", "message": "새로운 OpenAI 버전 서버가 정상 작동 중입니다!"}
 
 @app.post("/upload")
 async def upload_and_create_vectordb(file: UploadFile = File(...)):
@@ -70,13 +65,12 @@ async def upload_and_create_vectordb(file: UploadFile = File(...)):
 @app.post("/ask")
 async def ask_question(request: QueryRequest):
     if not os.path.exists(CHROMA_PERSIST_DIR):
-        raise HTTPException(status_code=400, detail="벡터 DB가 아직 생성되지 않았습니다. PDF를 먼저 업로드하세요.")
+        raise HTTPException(status_code=400, detail="벡터 DB가 아직 생성되지 않았습니다.")
         
     vectorstore = Chroma(persist_directory=CHROMA_PERSIST_DIR, embedding_function=embeddings)
     
-    # 챗봇 대답은 원래대로 현진건(Gemini)이 담당!
+    # 벡터 변환은 OpenAI가, 질문 대답은 구글 현진건(Gemini)이 담당!
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro-latest", streaming=True)
-    
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
     
     def format_docs(docs):
