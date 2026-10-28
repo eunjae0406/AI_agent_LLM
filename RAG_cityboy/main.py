@@ -36,7 +36,7 @@ if not GOOGLE_API_KEY:
 # Chroma DB 설정
 CHROMA_PERSIST_DIR = "./chroma_db"
 # 구글 임베딩 모델 (요청하신 text-embedding-004 사용)
-embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
+embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 
 # 질의 요청 모델
 class QueryRequest(BaseModel):
