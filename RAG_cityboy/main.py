@@ -52,7 +52,7 @@ class SafeGoogleEmbeddings(GoogleGenerativeAIEmbeddings):
             return vector
         return self._flatten(vector)
 
-embeddings = SafeGoogleEmbeddings(model="models/text-embedding-004")
+embeddings = SafeGoogleEmbeddings(model="models/embedding-001")
 
 class QueryRequest(BaseModel):
     query: str
