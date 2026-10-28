@@ -1,4 +1,3 @@
-#새로운 파일
 import os
 import tempfile
 import json
@@ -9,6 +8,7 @@ from pydantic import BaseModel
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+# 💡 순정 임베딩 패키지 직접 호출
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_community.vectorstores import Chroma
 from langchain_core.runnables import RunnablePassthrough
@@ -31,23 +31,9 @@ if not GOOGLE_API_KEY:
 
 CHROMA_PERSIST_DIR = "./chroma_db"
 
-class SafeGoogleEmbeddings(GoogleGenerativeAIEmbeddings):
-    def _flatten(self, vec):
-        while isinstance(vec, list) and len(vec) > 0 and isinstance(vec[0], list):
-            vec = vec[0]
-        return vec
-
-    def embed_documents(self, texts, **kwargs):
-        vectors = super().embed_documents(texts, **kwargs)
-        if not vectors: return vectors
-        return [self._flatten(v) for v in vectors]
-
-    def embed_query(self, text, **kwargs):
-        vector = super().embed_query(text, **kwargs)
-        if not vector: return vector
-        return self._flatten(vector)
-
-embeddings = SafeGoogleEmbeddings(model="models/embedding-001")
+# 💡 에러의 주범이었던 SafeGoogleEmbeddings 껍질을 삭제하고, 
+# 구글 공식 순정 모듈 + 최신 004 모델로 다이렉트 연결!
+embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
 
 class QueryRequest(BaseModel):
     query: str
@@ -75,7 +61,7 @@ async def upload_and_create_vectordb(file: UploadFile = File(...)):
         )
 
         os.remove(tmp_path)
-        return {"status": "success", "message": f"'{file.filename}' 벡터 DB 생성 완료"}
+        return {"status": "success", "message": f"'{file.filename}' 벡터 DB 생성 완료 (최종성공!)"}
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
