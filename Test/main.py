@@ -34,7 +34,7 @@ vector_db = None
 
 # [실전 에러 방지 조건 5] API 사양 명확화 및 키 환경변수 로드
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-EMBEDDING_MODEL = "models/text-embedding-004" 
+EMBEDDING_MODEL = "text-embedding-004" 
 LLM_MODEL = "gemini-1.5-flash" # 답변 생성 및 다중 질의용 LLM
 
 class QueryRequest(BaseModel):
